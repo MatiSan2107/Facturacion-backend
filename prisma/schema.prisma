@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id               Int       @id @default(autoincrement())
+  email            String    @unique
+  password         String
+  name             String?
+  role             String    @default("USER")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  
+  clients          Client[]
+  invoices         Invoice[]
+  products         Product[] // <--- Esta línea necesita la conexión en Product
+  orders           Order[]
+  
+  sentMessages     Message[] @relation("SentMessages")
+  receivedMessages Message[] @relation("ReceivedMessages")
+}
+
+model Client {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String?
+  address   String?
+  taxId     String?
+  createdAt DateTime @default(now())
+  
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  invoices  Invoice[]
+}
+
+model Product {
+  id        Int      @id @default(autoincrement())
+  name      String   
+  price     Float    
+  stock     Int      @default(0)
+  createdAt DateTime @default(now())
+  
+  // ESTAS SON LAS LÍNEAS QUE FALTABAN O ESTABAN ROTAS:
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Invoice {
+  id        Int           @id @default(autoincrement())
+  total     Float
+  status    String        @default("PENDIENTE")
+  createdAt DateTime      @default(now())
+  
+  userId    Int
+  user      User          @relation(fields: [userId], references: [id])
+  clientId  Int
+  client    Client        @relation(fields: [clientId], references: [id])
+  items     InvoiceItem[]
+}
+
+model InvoiceItem {
+  id          Int     @id @default(autoincrement())
+  description String
+  quantity    Int
+  price       Float
+  invoiceId   Int
+  invoice     Invoice @relation(fields: [invoiceId], references: [id])
+}
+
+model Order {
+  id        Int         @id @default(autoincrement())
+  total     Float
+  status    String      @default("PENDIENTE")
+  createdAt DateTime    @default(now())
+  
+  userId    Int
+  user      User        @relation(fields: [userId], references: [id])
+  items     OrderItem[]
+}
+
+model OrderItem {
+  id          Int    @id @default(autoincrement())
+  description String
+  quantity    Int
+  price       Float
+  orderId     Int
+  order       Order  @relation(fields: [orderId], references: [id])
+}
+
+model Message {
+  id         Int      @id @default(autoincrement())
+  content    String
+  createdAt  DateTime @default(now())
+  
+  senderId   Int
+  sender     User     @relation("SentMessages", fields: [senderId], references: [id])
+  receiverId Int
+  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
+}
+
+model ChatMessage {
+  id              Int      @id @default(autoincrement())
+  author          String
+  text            String
+  createdAt       DateTime @default(now())
+  // Nuevos campos para control individual
+  deletedByAdmin    Boolean  @default(false)
+  deletedByCustomer Boolean  @default(false)
+}
