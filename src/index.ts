@@ -114,6 +114,10 @@ app.post('/orders', authenticate, async (req: any, res) => {
         items: { create: items.map((i: any) => ({ description: i.description, quantity: Number(i.quantity), price: parseFloat(i.price) })) }
       }, include: { items: true }
     });
+    
+    // --- NUEVO: Emitimos la alerta al administrador en tiempo real ---
+    io.to('admin_room').emit('nueva_orden');
+
     res.json(order);
   } catch (error) { res.status(500).json({ error: 'Error pedido' }); }
 });
