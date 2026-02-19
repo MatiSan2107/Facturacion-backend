@@ -195,24 +195,26 @@ app.get('/chat/history', authenticate, async (req: any, res) => {
 
 app.post('/chat/upload', authenticate, async (req: any, res) => {
   try {
-    // Aquí podrías integrar un servicio como Cloudinary. 
-    // Por ahora, devolvemos un placeholder funcional.
     res.json({ url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf", name: "documento.pdf" });
   } catch (error) {
     res.status(500).json({ error: 'Error al subir archivo' });
   }
 });
 
-app.delete('/chat/history', authenticate, async (req: any, res) => {
+// NUEVO: Ruta DELETE actualizada para borrar por sala específica
+app.delete('/chat/history/:room', authenticate, async (req: any, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     const isAdmin = user?.role === 'ADMIN';
 
+    // Determinamos qué sala limpiar
+    const roomToClear = isAdmin ? req.params.room : `room_${user?.email}`;
+
     await prisma.chatMessage.updateMany({
-      where: isAdmin ? {} : { author: user?.email },
+      where: { room: roomToClear }, // SOLO borramos los de esta sala
       data: isAdmin ? { deletedByAdmin: true } : { deletedByCustomer: true }
     });
-    res.json({ message: 'Historial ocultado' });
+    res.json({ message: 'Historial de la sala ocultado' });
   } catch (error) { 
     res.status(500).json({ error: 'Error al ocultar historial' }); 
   }
@@ -229,7 +231,7 @@ app.get('/clients', authenticate, async (req: any, res) => {
   res.json(c);
 });
 
-// 6. CONFIGURACIÓN DE SOCKETS (SOPORTE DE SALAS PRIVADAS)
+// 6. CONFIGURACIÓN DE SOCKETS (SOPORTE DE SALAS PRIVADAS Y ALERTAS)
 io.on("connection", (socket) => {
   console.log(`⚡ Usuario conectado al chat: ${socket.id}`);
 
@@ -241,7 +243,6 @@ io.on("connection", (socket) => {
 
   socket.on("send_message", async (data) => {
     try {
-      // CORRECCIÓN: Ahora incluimos el campo 'room' para evitar el error de TypeScript
       await prisma.chatMessage.create({
         data: { 
           author: data.author, 
@@ -252,8 +253,14 @@ io.on("connection", (socket) => {
         }
       });
       
-      // Emitimos solo a la sala específica para privacidad
+      // 1. Emitimos a la sala privada del cliente (El cliente y el admin lo ven si están dentro)
       io.to(data.room).emit("receive_message", data);
+
+      // 2. NUEVO: Enviamos una "alerta" a la sala del admin para que sume 1 a la notificación
+      if (data.room !== 'admin_room') {
+        io.to('admin_room').emit("receive_message", data);
+      }
+
     } catch (error) { console.error("Error socket:", error); }
   });
 
