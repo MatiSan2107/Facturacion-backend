@@ -129,10 +129,13 @@ model Message {
 }
 
 model ChatMessage {
-  id              Int      @id @default(autoincrement())
-  author          String
-  text            String
-  createdAt       DateTime @default(now())
-  deletedByAdmin  Boolean  @default(false)
-  deletedByCustomer Boolean @default(false)
+  id                Int      @id @default(autoincrement())
+  author            String
+  text              String
+  room              String   // <-- AGREGAR ESTO: Para separar conversaciones
+  fileUrl           String?  // <-- AGREGAR ESTO: Para los PDF
+  fileName          String?  // <-- AGREGAR ESTO: Nombre del archivo
+  deletedByAdmin    Boolean  @default(false)
+  deletedByCustomer Boolean  @default(false)
+  createdAt         DateTime @default(now())
 }

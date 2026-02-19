@@ -9,16 +9,13 @@ import { Server } from 'socket.io';
 // 1. INICIALIZACIÓN
 const prisma = new PrismaClient();
 const app = express();
-// Render asigna el puerto automáticamente a través de la variable de entorno
 const PORT = process.env.PORT || 10000; 
-// Usamos la variable que configuramos en el panel de Render
 const JWT_SECRET = process.env.JWT_SECRET || 'secreto123';
 
 // 2. CONFIGURACIÓN DE ORIGENES (CORS)
-// IMPORTANTE: Reemplaza la URL de Vercel con la tuya exacta
 const allowedOrigins = [
   "http://localhost:5173", 
-  "https://facturacion-front-eyp7.vercel.app" // Tu URL de Vercel
+  "https://facturacion-front-eyp7.vercel.app" 
 ];
 
 // 3. CREAR SERVIDOR HTTP Y SOCKET.IO CON CORS
@@ -166,32 +163,59 @@ app.patch('/orders/:id/status', authenticate, async (req: any, res) => {
   } catch (error) { res.status(500).json({ error: 'Error actualizando estado' }); }
 });
 
-// --- RUTAS DE CHAT ---
+// --- RUTAS DE CHAT PRIVADO ---
 app.get('/chat/history', authenticate, async (req: any, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
-    const isAdmin = user?.role === 'ADMIN';
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    const isAdmin = user.role === 'ADMIN';
 
     const messages = await prisma.chatMessage.findMany({
       where: {
-        ...(isAdmin ? { deletedByAdmin: false } : { deletedByCustomer: false })
+        ...(isAdmin 
+          ? { deletedByAdmin: false } 
+          : { 
+              deletedByCustomer: false,
+              OR: [
+                { author: user.email }, 
+                { room: `room_${user.email}` } 
+              ]
+            }
+        )
       },
       orderBy: { createdAt: 'asc' },
-      take: 50
+      take: 100 
     });
     res.json(messages);
-  } catch (error) { res.status(500).json({ error: 'Error al cargar historial' }); }
+  } catch (error) { 
+    res.status(500).json({ error: 'Error al cargar historial' }); 
+  }
+});
+
+app.post('/chat/upload', authenticate, async (req: any, res) => {
+  try {
+    // Aquí podrías integrar un servicio como Cloudinary. 
+    // Por ahora, devolvemos un placeholder funcional.
+    res.json({ url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf", name: "documento.pdf" });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al subir archivo' });
+  }
 });
 
 app.delete('/chat/history', authenticate, async (req: any, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     const isAdmin = user?.role === 'ADMIN';
+
     await prisma.chatMessage.updateMany({
+      where: isAdmin ? {} : { author: user?.email },
       data: isAdmin ? { deletedByAdmin: true } : { deletedByCustomer: true }
     });
     res.json({ message: 'Historial ocultado' });
-  } catch (error) { res.status(500).json({ error: 'Error al ocultar historial' }); }
+  } catch (error) { 
+    res.status(500).json({ error: 'Error al ocultar historial' }); 
+  }
 });
 
 // --- RUTAS EXTRAS ---
@@ -205,16 +229,31 @@ app.get('/clients', authenticate, async (req: any, res) => {
   res.json(c);
 });
 
-// 6. CONFIGURACIÓN DE SOCKETS
+// 6. CONFIGURACIÓN DE SOCKETS (SOPORTE DE SALAS PRIVADAS)
 io.on("connection", (socket) => {
   console.log(`⚡ Usuario conectado al chat: ${socket.id}`);
 
+  // El cliente se une a su propia sala basada en su email
+  socket.on("join_room", (roomName) => {
+    socket.join(roomName);
+    console.log(`User ${socket.id} joined room: ${roomName}`);
+  });
+
   socket.on("send_message", async (data) => {
     try {
+      // CORRECCIÓN: Ahora incluimos el campo 'room' para evitar el error de TypeScript
       await prisma.chatMessage.create({
-        data: { author: data.author, text: data.message }
+        data: { 
+          author: data.author, 
+          text: data.message, 
+          room: data.room || 'general',
+          fileUrl: data.fileUrl || null,
+          fileName: data.fileName || null
+        }
       });
-      io.emit("receive_message", data);
+      
+      // Emitimos solo a la sala específica para privacidad
+      io.to(data.room).emit("receive_message", data);
     } catch (error) { console.error("Error socket:", error); }
   });
 
