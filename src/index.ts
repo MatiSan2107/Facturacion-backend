@@ -9,23 +9,36 @@ import { Server } from 'socket.io';
 // 1. INICIALIZACIÓN
 const prisma = new PrismaClient();
 const app = express();
-const PORT = process.env.PORT || 3000;
-const JWT_SECRET = 'mi_secreto_super_seguro';
+// Render asigna el puerto automáticamente a través de la variable de entorno
+const PORT = process.env.PORT || 10000; 
+// Usamos la variable que configuramos en el panel de Render
+const JWT_SECRET = process.env.JWT_SECRET || 'secreto123';
 
-// 2. CREAR SERVIDOR HTTP Y SOCKET.IO
+// 2. CONFIGURACIÓN DE ORIGENES (CORS)
+// IMPORTANTE: Reemplaza la URL de Vercel con la tuya exacta
+const allowedOrigins = [
+  "http://localhost:5173", 
+  "https://facturacion-front-eyp7.vercel.app" // Tu URL de Vercel
+];
+
+// 3. CREAR SERVIDOR HTTP Y SOCKET.IO CON CORS
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: "http://localhost:5173", // Tu Frontend
-    methods: ["GET", "POST"]
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
-// 3. MIDDLEWARES
-app.use(cors());
+// 4. MIDDLEWARES GLOBAL
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true
+}));
 app.use(express.json());
 
-// 4. MIDDLEWARE DE AUTENTICACIÓN
+// 5. MIDDLEWARE DE AUTENTICACIÓN
 const authenticate = (req: any, res: any, next: any) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -62,7 +75,7 @@ app.post('/auth/login', async (req, res) => {
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
-    const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
     res.json({ token, user: { email: user.email, name: user.name, role: user.role } });
   } catch (error) { res.status(500).json({ error: 'Error login' }); }
 });
@@ -128,7 +141,6 @@ app.patch('/orders/:id/status', authenticate, async (req: any, res) => {
     });
 
     if (status === 'APROBADO') {
-      // 1. Buscar o Crear Cliente
       let client = await prisma.client.findFirst({ where: { email: updatedOrder.user.email } });
       if (!client) {
         client = await prisma.client.create({
@@ -136,7 +148,6 @@ app.patch('/orders/:id/status', authenticate, async (req: any, res) => {
         });
       }
 
-      // 2. Crear Factura
       await prisma.invoice.create({
         data: {
           userId: req.userId, clientId: client.id, total: updatedOrder.total, status: 'PENDIENTE',
@@ -144,7 +155,6 @@ app.patch('/orders/:id/status', authenticate, async (req: any, res) => {
         }
       });
 
-      // 3. Restar Stock
       for (const item of updatedOrder.items) {
         await prisma.product.updateMany({
           where: { name: item.description },
@@ -156,9 +166,7 @@ app.patch('/orders/:id/status', authenticate, async (req: any, res) => {
   } catch (error) { res.status(500).json({ error: 'Error actualizando estado' }); }
 });
 
-// --- RUTAS DE CHAT (INDIVIDUALES Y FILTRADAS) ---
-
-// 1. Cargar historial filtrado: Si el usuario lo "borró", no se le muestra
+// --- RUTAS DE CHAT ---
 app.get('/chat/history', authenticate, async (req: any, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
@@ -166,32 +174,24 @@ app.get('/chat/history', authenticate, async (req: any, res) => {
 
     const messages = await prisma.chatMessage.findMany({
       where: {
-        // Filtro de borrado individual
         ...(isAdmin ? { deletedByAdmin: false } : { deletedByCustomer: false })
       },
       orderBy: { createdAt: 'asc' },
-      take: 50 // Mantenemos el límite de los últimos 50 mensajes
+      take: 50
     });
     res.json(messages);
-  } catch (error) {
-    res.status(500).json({ error: 'Error al cargar historial' });
-  }
+  } catch (error) { res.status(500).json({ error: 'Error al cargar historial' }); }
 });
 
-// 2. Borrado Individual: No borra de la DB, solo oculta para este usuario
 app.delete('/chat/history', authenticate, async (req: any, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     const isAdmin = user?.role === 'ADMIN';
-
     await prisma.chatMessage.updateMany({
       data: isAdmin ? { deletedByAdmin: true } : { deletedByCustomer: true }
     });
-
-    res.json({ message: 'Historial limpiado para tu vista' });
-  } catch (error) {
-    res.status(500).json({ error: 'Error al ocultar historial' });
-  }
+    res.json({ message: 'Historial ocultado' });
+  } catch (error) { res.status(500).json({ error: 'Error al ocultar historial' }); }
 });
 
 // --- RUTAS EXTRAS ---
@@ -205,32 +205,23 @@ app.get('/clients', authenticate, async (req: any, res) => {
   res.json(c);
 });
 
-// 5. CONFIGURACIÓN DE SOCKETS (TIEMPO REAL)
+// 6. CONFIGURACIÓN DE SOCKETS
 io.on("connection", (socket) => {
   console.log(`⚡ Usuario conectado al chat: ${socket.id}`);
 
   socket.on("send_message", async (data) => {
     try {
-      // Guardar el mensaje en la DB siempre que se envía
       await prisma.chatMessage.create({
-        data: {
-          author: data.author,
-          text: data.message,
-        }
+        data: { author: data.author, text: data.message }
       });
-      // Retransmitir a todos los conectados
       io.emit("receive_message", data);
-    } catch (error) {
-      console.error("Error al guardar mensaje:", error);
-    }
+    } catch (error) { console.error("Error socket:", error); }
   });
 
-  socket.on("disconnect", () => {
-    console.log("Usuario desconectado", socket.id);
-  });
+  socket.on("disconnect", () => { console.log("Usuario desconectado", socket.id); });
 });
 
-// 6. ARRANCAR SERVIDOR (httpServer es necesario para que Socket.io funcione)
+// 7. ARRANCAR SERVIDOR
 httpServer.listen(PORT, () => {
   console.log(`🚀 Servidor y Chat listos en puerto ${PORT}`);
 });
